@@ -14,8 +14,10 @@ test('encrypts connection passwords with owner-only files', async () => {
   assert.equal(await vault.get('connection-1'), 'not-plain-text')
   const raw = await readFile(join(dir, 'sql-workbench-secrets.json'), 'utf8')
   assert.equal(raw.includes('not-plain-text'), false)
-  assert.equal((await stat(join(dir, 'sql-workbench-secrets.key'))).mode & 0o777, 0o600)
-  assert.equal((await stat(join(dir, 'sql-workbench-secrets.json'))).mode & 0o777, 0o600)
+  if (process.platform !== 'win32') {
+    assert.equal((await stat(join(dir, 'sql-workbench-secrets.key'))).mode & 0o777, 0o600)
+    assert.equal((await stat(join(dir, 'sql-workbench-secrets.json'))).mode & 0o777, 0o600)
+  }
 })
 
 test('migrates legacy plaintext passwords and never returns them publicly', async () => {
