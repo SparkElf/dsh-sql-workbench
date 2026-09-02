@@ -91,9 +91,9 @@ test('user manages SQL, saves it, and adds query and table references to chat', 
   await workbench.getByTitle('新建查询').first().click()
   await runSql(page, 'CREATE TABLE IF NOT EXISTS ' + TABLE_NAME + ' (id INTEGER PRIMARY KEY, name TEXT)')
   await runSql(page, 'DELETE FROM ' + TABLE_NAME)
-  await runSql(page, "INSERT INTO " + TABLE_NAME + " (id, name) VALUES (1, 'Navicat workflow')")
+  await runSql(page, "WITH RECURSIVE seq(id) AS (SELECT 1 UNION ALL SELECT id + 1 FROM seq WHERE id < 120) INSERT INTO " + TABLE_NAME + " (id, name) SELECT id, 'Navicat workflow ' || id FROM seq")
   await runSql(page, 'SELECT id, name FROM ' + TABLE_NAME)
-  await expect(workbench.locator('[data-sql-result-grid]')).toContainText('Navicat workflow')
+  await expect(workbench.locator('[data-sql-result-grid]')).toContainText('Navicat workflow 1')
 
   await workbench.getByTitle('保存查询').click()
   const saveDialog = page.getByRole('dialog', { name: '保存查询' })
@@ -113,6 +113,30 @@ test('user manages SQL, saves it, and adds query and table references to chat', 
   await databaseRow.click()
   const tableRow = workbench.locator('[data-sql-object-tree] button', { hasText: TABLE_NAME }).first()
   await expect(tableRow).toBeVisible()
+  await tableRow.click()
+  await expect(workbench.locator('[data-sql-object-details]')).toContainText(TABLE_NAME)
+  await expect(workbench.locator('[data-sql-object-details]')).toContainText('id')
+
+  const previewCompleted = page.waitForResponse(response => response.url().includes('/dsh-sql-workbench/api/object.preview'))
+  await tableRow.dblclick()
+  await previewCompleted
+  const previewGrid = workbench.locator('[data-sql-result-grid]')
+  await expect(previewGrid).toBeVisible()
+  await expect(previewGrid.locator('thead input')).toHaveCount(2)
+  await expect(previewGrid).toContainText(/共 120 行|120 total rows/)
+
+  const sortCompleted = page.waitForResponse(response => response.url().includes('/dsh-sql-workbench/api/object.preview'))
+  await previewGrid.getByRole('button', { name: /id/ }).click()
+  await sortCompleted
+  await expect(previewGrid.locator('tbody tr').first()).toContainText('120')
+
+  const filterCompleted = page.waitForResponse(response => response.url().includes('/dsh-sql-workbench/api/object.preview'))
+  await previewGrid.locator('thead input').nth(1).fill('workflow 10')
+  await previewGrid.locator('thead input').nth(1).press('Enter')
+  await filterCompleted
+  await expect(previewGrid).toContainText(/共 11 行|11 total rows/)
+
+  await workbench.getByRole('button', { name: '对象', exact: true }).first().click()
   await tableRow.click({ button: 'right' })
   await page.getByRole('button', { name: '添加到对话', exact: true }).click()
   await expect(composer).toContainText(TABLE_NAME)
