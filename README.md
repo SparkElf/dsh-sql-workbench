@@ -23,7 +23,7 @@ A Navicat-style SQL workbench for DeepSeek Harness. It runs as an independent np
 Requires DSH 0.1.2-alpha.2 and Better Sidebar.
 
     dsh plugin --profile web add dsh-better-sidebar@alpha
-    dsh plugin --profile web add dsh-sql-workbench
+    dsh plugin --profile web add file:/absolute/path/to/dsh-sql-workbench-0.2.0.tgz
 
 Restart dsh web, refresh the browser, expand Better Sidebar, then open New tab > Database.
 

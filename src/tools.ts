@@ -32,7 +32,7 @@ export function registerSqlTools(ctx: SqlContext, runtime: SqlWorkbenchRuntime):
 
   register(defineTool({
     name: 'sql_list_connections',
-    description: 'List every SQL data source configured in the SQL workbench. Returns the complete connection records.',
+    description: 'List SQL data sources configured in the SQL workbench. Returns non-secret connection metadata; passwords are never exposed.',
     parameters: {},
     output: { schema: { type: 'array', items: openObjectSchema }, render: renderJson },
     execute: () => jsonArray(runtime.store.listConnections()),
