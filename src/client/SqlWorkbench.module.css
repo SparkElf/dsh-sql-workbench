@@ -345,6 +345,14 @@
   grid-row: 1 / -1;
 }
 
+.root[data-mode='results'] .workspace {
+  grid-template-rows: 34px minmax(0, 1fr);
+}
+
+.root[data-mode='results'] .resultsPane {
+  grid-row: 2;
+}
+
 .queryTabs {
   height: 34px;
   overflow-x: auto;
@@ -752,14 +760,6 @@
   .root[data-mode='results'] .editorPane,
   .root[data-mode='results'] .queryToolbar {
     display: none;
-  }
-
-  .root[data-mode='results'] .workspace {
-    grid-template-rows: 34px minmax(0, 1fr);
-  }
-
-  .root[data-mode='results'] .resultsPane {
-    grid-row: 2;
   }
 
   .detailsPane {
