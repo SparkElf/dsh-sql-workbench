@@ -13,6 +13,7 @@ import type {
   CatalogSnapshot,
   ConnectionConfig,
   MysqlConnection,
+  ObjectConstraint,
   ObjectDetails,
   ObjectIndex,
   ObjectPreviewRequest,
@@ -559,14 +560,122 @@ async function loadIndexes(connection: ConnectionConfig, object: CatalogObject):
   } finally { client.close() }
 }
 
+
+function groupConstraints(rows: Array<{ name: string; kind: ObjectConstraint['kind']; column: string | null; position: number; definition: string | null }>): ObjectConstraint[] {
+  const grouped = new Map<string, ObjectConstraint>()
+  for (const row of rows.sort((left, right) => left.position - right.position)) {
+    let constraint = grouped.get(row.name)
+    if (constraint === undefined) {
+      constraint = { name: row.name, kind: row.kind, columns: [], definition: row.definition }
+      grouped.set(row.name, constraint)
+    }
+    if (row.column !== null && row.column !== '' && !constraint.columns.includes(row.column)) constraint.columns.push(row.column)
+    if ((constraint.definition === null || constraint.definition === undefined) && row.definition !== null) constraint.definition = row.definition
+  }
+  return [...grouped.values()]
+}
+
+function constraintKind(value: string): ObjectConstraint['kind'] | null {
+  if (value === 'p' || value === 'P' || value === 'PRIMARY KEY') return 'primary'
+  if (value === 'u' || value === 'U' || value === 'UNIQUE') return 'unique'
+  if (value === 'f' || value === 'R' || value === 'FOREIGN KEY') return 'foreign'
+  if (value === 'c' || value === 'C' || value === 'CHECK') return 'check'
+  return null
+}
+
+async function loadConstraints(connection: ConnectionConfig, object: CatalogObject): Promise<ObjectConstraint[]> {
+  if (object.kind === 'view' || connection.kind === 'doris') return []
+  if (connection.kind === 'postgres') {
+    const client = postgresClient(connection)
+    await client.connect()
+    try {
+      const result = await client.query<{ name: string; type: string; column: string | null; position: number | null; definition: string }>([
+        'SELECT c.conname AS name, c.contype AS type, a.attname AS column, keys.ordinality AS position,',
+        'pg_get_constraintdef(c.oid, true) AS definition',
+        'FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid',
+        'JOIN pg_namespace n ON n.oid = t.relnamespace',
+        'LEFT JOIN LATERAL unnest(c.conkey) WITH ORDINALITY AS keys(attnum, ordinality) ON true',
+        'LEFT JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = keys.attnum',
+        "WHERE n.nspname = $1 AND t.relname = $2 AND c.contype IN ('p','u','f','c')",
+        'ORDER BY c.conname, keys.ordinality',
+      ].join(' '), [object.schema ?? 'public', object.name])
+      return groupConstraints(result.rows.flatMap(row => {
+        const kind = constraintKind(row.type)
+        return kind === null ? [] : [{ name: row.name, kind, column: row.column, position: row.position ?? 0, definition: row.definition }]
+      }))
+    } finally { await client.end() }
+  }
+  if (isMysqlConnection(connection)) {
+    const client = await mysql.createConnection({ host: connection.host, port: connection.port, user: connection.user, password: connection.password, database: connection.database })
+    try {
+      const [keyRows] = await client.query<RowDataPacket[]>([
+        'SELECT tc.CONSTRAINT_NAME, tc.CONSTRAINT_TYPE, kcu.COLUMN_NAME, kcu.ORDINAL_POSITION,',
+        'kcu.REFERENCED_TABLE_SCHEMA, kcu.REFERENCED_TABLE_NAME, kcu.REFERENCED_COLUMN_NAME',
+        'FROM information_schema.TABLE_CONSTRAINTS tc LEFT JOIN information_schema.KEY_COLUMN_USAGE kcu',
+        'ON kcu.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND kcu.CONSTRAINT_NAME = tc.CONSTRAINT_NAME',
+        'AND kcu.TABLE_SCHEMA = tc.TABLE_SCHEMA AND kcu.TABLE_NAME = tc.TABLE_NAME',
+        "WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? AND tc.CONSTRAINT_TYPE IN ('PRIMARY KEY','UNIQUE','FOREIGN KEY')",
+        'ORDER BY tc.CONSTRAINT_NAME, kcu.ORDINAL_POSITION',
+      ].join(' '), [object.database, object.name])
+      const rows: Array<{ name: string; kind: ObjectConstraint['kind']; column: string | null; position: number; definition: string | null }> = keyRows.flatMap(row => {
+        const kind = constraintKind(String(row.CONSTRAINT_TYPE))
+        if (kind === null) return []
+        const reference = row.REFERENCED_TABLE_NAME == null ? null : 'REFERENCES ' + String(row.REFERENCED_TABLE_SCHEMA) + '.' + String(row.REFERENCED_TABLE_NAME) + '(' + String(row.REFERENCED_COLUMN_NAME) + ')'
+        return [{ name: String(row.CONSTRAINT_NAME), kind, column: row.COLUMN_NAME == null ? null : String(row.COLUMN_NAME), position: Number(row.ORDINAL_POSITION ?? 0), definition: reference }]
+      })
+      try {
+        const [checkRows] = await client.query<RowDataPacket[]>([
+          'SELECT tc.CONSTRAINT_NAME, cc.CHECK_CLAUSE FROM information_schema.TABLE_CONSTRAINTS tc',
+          'JOIN information_schema.CHECK_CONSTRAINTS cc ON cc.CONSTRAINT_SCHEMA = tc.CONSTRAINT_SCHEMA AND cc.CONSTRAINT_NAME = tc.CONSTRAINT_NAME',
+          "WHERE tc.TABLE_SCHEMA = ? AND tc.TABLE_NAME = ? AND tc.CONSTRAINT_TYPE = 'CHECK'",
+        ].join(' '), [object.database, object.name])
+        for (const row of checkRows) rows.push({ name: String(row.CONSTRAINT_NAME), kind: 'check', column: null, position: 0, definition: row.CHECK_CLAUSE == null ? null : String(row.CHECK_CLAUSE) })
+      } catch {}
+      return groupConstraints(rows)
+    } finally { await client.end() }
+  }
+  if (connection.kind === 'oracle') {
+    const client = await oracledb.getConnection({ user: connection.user, password: connection.password, connectString: connection.host + ':' + String(connection.port) + '/' + connection.serviceName })
+    try {
+      const result = await client.execute([
+        'SELECT c.CONSTRAINT_NAME, c.CONSTRAINT_TYPE, cc.COLUMN_NAME, cc.POSITION, c.SEARCH_CONDITION_VC',
+        'FROM ALL_CONSTRAINTS c LEFT JOIN ALL_CONS_COLUMNS cc',
+        'ON cc.OWNER = c.OWNER AND cc.CONSTRAINT_NAME = c.CONSTRAINT_NAME AND cc.TABLE_NAME = c.TABLE_NAME',
+        "WHERE c.OWNER = :owner AND c.TABLE_NAME = :tableName AND c.CONSTRAINT_TYPE IN ('P','U','R','C')",
+        'ORDER BY c.CONSTRAINT_NAME, cc.POSITION',
+      ].join(' '), { owner: object.schema ?? connection.database.toUpperCase(), tableName: object.name }, { outFormat: oracledb.OUT_FORMAT_OBJECT })
+      const rows = (result.rows ?? []) as Array<Record<string, unknown>>
+      return groupConstraints(rows.flatMap(row => {
+        const kind = constraintKind(String(row.CONSTRAINT_TYPE))
+        return kind === null ? [] : [{ name: String(row.CONSTRAINT_NAME), kind, column: row.COLUMN_NAME == null ? null : String(row.COLUMN_NAME), position: Number(row.POSITION ?? 0), definition: row.SEARCH_CONDITION_VC == null ? null : String(row.SEARCH_CONDITION_VC) }]
+      }))
+    } finally { await client.close() }
+  }
+  const client = new DatabaseSync(connection.file)
+  try {
+    const rows: Array<{ name: string; kind: ObjectConstraint['kind']; column: string | null; position: number; definition: string | null }> = []
+    const columns = client.prepare('PRAGMA table_info(' + quoteIdentifier('sqlite', object.name) + ')').all() as Array<{ name: string; pk: number }>
+    for (const column of columns.filter(item => item.pk > 0)) rows.push({ name: 'PRIMARY KEY', kind: 'primary', column: column.name, position: column.pk, definition: null })
+    const indexes = client.prepare('PRAGMA index_list(' + quoteIdentifier('sqlite', object.name) + ')').all() as Array<{ name: string; origin: string }>
+    for (const index of indexes.filter(item => item.origin === 'u')) {
+      const indexColumns = client.prepare('PRAGMA index_info(' + quoteIdentifier('sqlite', index.name) + ')').all() as Array<{ name: string; seqno: number }>
+      for (const column of indexColumns) rows.push({ name: index.name, kind: 'unique', column: column.name, position: column.seqno + 1, definition: null })
+    }
+    const foreignKeys = client.prepare('PRAGMA foreign_key_list(' + quoteIdentifier('sqlite', object.name) + ')').all() as Array<{ id: number; seq: number; table: string; from: string; to: string }>
+    for (const foreignKey of foreignKeys) rows.push({ name: 'FOREIGN KEY ' + String(foreignKey.id + 1), kind: 'foreign', column: foreignKey.from, position: foreignKey.seq + 1, definition: 'REFERENCES ' + quoteIdentifier('sqlite', foreignKey.table) + '(' + quoteIdentifier('sqlite', foreignKey.to) + ')' })
+    return groupConstraints(rows)
+  } finally { client.close() }
+}
+
 export async function loadObjectDetails(connection: ConnectionConfig, object: CatalogObject): Promise<ObjectDetails> {
+  const [indexes, constraints] = await Promise.all([loadIndexes(connection, object), loadConstraints(connection, object)])
   return {
     connectionId: connection.id,
     capabilities: driverCapabilities(connection.kind),
     object,
     qualifiedName: qualifiedObjectName(connection.kind, object),
-    indexes: await loadIndexes(connection, object),
-    constraints: [],
+    indexes,
+    constraints,
   }
 }
 

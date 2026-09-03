@@ -11,7 +11,7 @@ test('SQLite adapter returns product metadata, indexes, and paged filtered rows'
   const directory = await mkdtemp(join(tmpdir(), 'dsh-sql-driver-'))
   const file = join(directory, 'catalog.sqlite')
   const database = new DatabaseSync(file)
-  database.exec('CREATE TABLE orders (id INTEGER PRIMARY KEY, customer TEXT NOT NULL); CREATE INDEX orders_customer_idx ON orders(customer); CREATE VIEW order_names AS SELECT customer FROM orders;')
+  database.exec('PRAGMA foreign_keys=ON; CREATE TABLE accounts (id INTEGER PRIMARY KEY); CREATE TABLE orders (id INTEGER PRIMARY KEY, account_id INTEGER REFERENCES accounts(id), customer TEXT NOT NULL UNIQUE); CREATE INDEX orders_customer_idx ON orders(customer); CREATE VIEW order_names AS SELECT customer FROM orders;')
   const insert = database.prepare('INSERT INTO orders (id, customer) VALUES (?, ?)')
   for (let id = 1; id <= 35; id++) insert.run(id, id % 5 === 0 ? 'Acme ' + id : 'Other ' + id)
   database.close()
@@ -28,6 +28,9 @@ test('SQLite adapter returns product metadata, indexes, and paged filtered rows'
 
   const details = await loadObjectDetails(connection, table)
   assert.equal(details.indexes.some(index => index.name === 'orders_customer_idx' && index.columns[0] === 'customer'), true)
+  assert.equal(details.constraints.some(constraint => constraint.kind === 'primary' && constraint.columns.includes('id')), true)
+  assert.equal(details.constraints.some(constraint => constraint.kind === 'unique' && constraint.columns.includes('customer')), true)
+  assert.equal(details.constraints.some(constraint => constraint.kind === 'foreign' && constraint.columns.includes('account_id') && constraint.definition?.includes('accounts')), true)
 
   const preview = await previewObjectPage(connection, { object: table, page: 2, pageSize: 10, sort: { column: 'id', direction: 'desc' }, filters: [{ column: 'customer', operator: 'contains', value: 'Other' }] })
   assert.equal(preview.totalRows, 28)

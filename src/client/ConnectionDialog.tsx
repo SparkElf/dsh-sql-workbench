@@ -8,6 +8,9 @@ interface ConnectionForm {
   id: string
   name: string
   kind: ConnectionKind
+  description: string
+  tags: string
+  versionHint: string
   file: string
   host: string
   port: number
@@ -19,15 +22,21 @@ interface ConnectionForm {
 
 function formOf(connection: ConnectionConfig | null): ConnectionForm {
   if (connection === null) {
-    return { id: '', name: '', kind: 'sqlite', file: '', host: '127.0.0.1', port: 0, user: '', password: '', database: '', serviceName: '' }
+    return { id: '', name: '', kind: 'sqlite', description: '', tags: '', versionHint: '', file: '', host: '127.0.0.1', port: 0, user: '', password: '', database: '', serviceName: '' }
+  }
+  const metadata = {
+    description: connection.description ?? '',
+    tags: connection.tags?.join(', ') ?? '',
+    versionHint: connection.versionHint ?? '',
   }
   if (connection.kind === 'sqlite') {
-    return { id: connection.id, name: connection.name, kind: connection.kind, file: connection.file, host: '', port: 0, user: '', password: '', database: '', serviceName: '' }
+    return { id: connection.id, name: connection.name, kind: connection.kind, ...metadata, file: connection.file, host: '', port: 0, user: '', password: '', database: '', serviceName: '' }
   }
   return {
     id: connection.id,
     name: connection.name,
     kind: connection.kind,
+    ...metadata,
     file: '',
     host: connection.host,
     port: connection.port,
@@ -38,9 +47,19 @@ function formOf(connection: ConnectionConfig | null): ConnectionForm {
   }
 }
 
+function metadataOf(form: ConnectionForm) {
+  const tags = form.tags.split(',').map(tag => tag.trim()).filter(Boolean)
+  return {
+    ...(form.description.trim() === '' ? {} : { description: form.description.trim() }),
+    ...(tags.length === 0 ? {} : { tags }),
+    ...(form.versionHint.trim() === '' ? {} : { versionHint: form.versionHint.trim() }),
+  }
+}
+
 function connectionOf(form: ConnectionForm): ConnectionConfig {
-  if (form.kind === 'sqlite') return { id: form.id, name: form.name, kind: form.kind, file: form.file }
-  const network = { id: form.id, name: form.name, host: form.host, port: form.port, user: form.user, password: form.password, database: form.database }
+  const metadata = metadataOf(form)
+  if (form.kind === 'sqlite') return { id: form.id, name: form.name, kind: form.kind, file: form.file, ...metadata }
+  const network = { id: form.id, name: form.name, host: form.host, port: form.port, user: form.user, password: form.password, database: form.database, ...metadata }
   if (form.kind === 'oracle') return { ...network, kind: form.kind, serviceName: form.serviceName }
   return { ...network, kind: form.kind }
 }
@@ -88,6 +107,9 @@ export function ConnectionDialog({ connection, onClose, onSave, onTest }: Connec
         <label className={css.field}><span>{t('field.user')}</span><input value={form.user} onChange={event => { patch({ user: event.target.value }) }} /></label>
         <label className={css.field}><span>{t('field.password')}</span><input type="password" value={form.password} onChange={event => { patch({ password: event.target.value }) }} /></label>
       </>}
+      <label className={css.field}><span>{t('field.description')}</span><input value={form.description} onChange={event => { patch({ description: event.target.value }) }} /></label>
+      <label className={css.field}><span>{t('field.tags')}</span><input value={form.tags} placeholder={t('field.tags.placeholder')} onChange={event => { patch({ tags: event.target.value }) }} /></label>
+      <label className={css.field}><span>{t('field.versionHint')}</span><input value={form.versionHint} onChange={event => { patch({ versionHint: event.target.value }) }} /></label>
       {status !== null && <div className={css.dialogStatus}>{status}</div>}
       <div className={css.dialogActions}>
         <button onClick={onClose}>{t('action.cancel')}</button>
