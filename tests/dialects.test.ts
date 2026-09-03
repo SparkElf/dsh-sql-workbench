@@ -27,6 +27,13 @@ test('builds parameterized postgres preview filters and pagination', () => {
   assert.deepEqual(plan.dataParams, ['%Acme%', 25, 25])
 })
 
+test('builds OR filters and ordered multi-column sorts', () => {
+  const plan = buildPreviewSql('postgres', { object, page: 1, pageSize: 50, filterLogic: 'or', filters: [{ column: 'id', operator: 'gt', value: 10 }, { column: 'customer', operator: 'startsWith', value: 'A' }], sorts: [{ column: 'customer', direction: 'asc' }, { column: 'id', direction: 'desc' }] })
+  assert.equal(plan.countSql, 'SELECT COUNT(*) AS "__dsh_total" FROM "public"."orders" WHERE "id" > $1 OR "customer" LIKE $2')
+  assert.equal(plan.dataSql, 'SELECT * FROM "public"."orders" WHERE "id" > $1 OR "customer" LIKE $2 ORDER BY "customer" ASC, "id" DESC LIMIT $3 OFFSET $4')
+  assert.deepEqual(plan.dataParams, [10, 'A%', 50, 0])
+})
+
 test('builds Oracle OFFSET FETCH and rejects unknown columns', () => {
   const plan = buildPreviewSql('oracle', { object, page: 3, pageSize: 50, filters: [] })
   assert.match(plan.dataSql, /OFFSET :p1 ROWS FETCH NEXT :p2 ROWS ONLY$/)
