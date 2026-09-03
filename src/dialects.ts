@@ -86,14 +86,13 @@ export function buildPreviewSql(kind: ConnectionKind, request: ObjectPreviewRequ
   const offset = (page - 1) * pageSize
   const countParams: JsonValue[] = []
   const clauses = (request.filters ?? []).map(filter => filterClause(kind, request.object, filter, countParams))
-  const where = clauses.length === 0 ? '' : ' WHERE ' + clauses.join(' AND ')
+  const filterLogic = request.filterLogic === 'or' ? 'OR' : 'AND'
+  const where = clauses.length === 0 ? '' : ' WHERE ' + clauses.join(' ' + filterLogic + ' ')
   const qualified = qualifiedObjectName(kind, request.object)
   const countSql = 'SELECT COUNT(*) AS ' + quoteIdentifier(kind, '__dsh_total') + ' FROM ' + qualified + where
-  let order = ''
-  if (request.sort !== undefined && request.sort !== null) {
-    assertColumn(request.object, request.sort.column)
-    order = ' ORDER BY ' + quoteIdentifier(kind, request.sort.column) + ' ' + request.sort.direction.toUpperCase()
-  }
+  const sorts = request.sorts ?? (request.sort === undefined || request.sort === null ? [] : [request.sort])
+  for (const sort of sorts) assertColumn(request.object, sort.column)
+  const order = sorts.length === 0 ? '' : ' ORDER BY ' + sorts.map(sort => quoteIdentifier(kind, sort.column) + ' ' + sort.direction.toUpperCase()).join(', ')
   const dataParams = [...countParams]
   let pagination: string
   if (kind === 'oracle') {

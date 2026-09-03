@@ -704,8 +704,10 @@ function pagedResult(
     totalPages,
     hasPrevious: page > 1,
     hasNext: page < totalPages,
-    sort: request.sort ?? null,
+    sort: request.sorts?.[0] ?? request.sort ?? null,
+    sorts: request.sorts ?? (request.sort === undefined || request.sort === null ? [] : [request.sort]),
     filters: request.filters ?? [],
+    filterLogic: request.filterLogic === 'or' ? 'or' : 'and',
     object: request.object,
   }
 }

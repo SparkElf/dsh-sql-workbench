@@ -124,6 +124,7 @@ export interface PreviewFilter {
   operator: PreviewFilterOperator
   value?: JsonValue
 }
+export type PreviewFilterLogic = 'and' | 'or'
 export interface PreviewSort {
   column: string
   direction: 'asc' | 'desc'
@@ -132,8 +133,11 @@ export interface ObjectPreviewRequest {
   object: CatalogObject
   page: number
   pageSize: number
+  /** Legacy single-column sort; new callers should use sorts. */
   sort?: PreviewSort | null
+  sorts?: PreviewSort[]
   filters?: PreviewFilter[]
+  filterLogic?: PreviewFilterLogic
 }
 
 export interface QueryResult {
@@ -153,7 +157,9 @@ export interface PagedQueryResult extends QueryResult {
   hasPrevious: boolean
   hasNext: boolean
   sort: PreviewSort | null
+  sorts: PreviewSort[]
   filters: PreviewFilter[]
+  filterLogic: PreviewFilterLogic
   object: CatalogObject
 }
 
