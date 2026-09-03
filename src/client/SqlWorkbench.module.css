@@ -330,6 +330,15 @@
   overflow: hidden;
 }
 
+.root[data-mode='objects'] .workspace {
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.root[data-mode='objects'] .detailsPane,
+.root[data-mode='objects'] .workspaceEmpty {
+  grid-row: 1 / -1;
+}
+
 .queryTabs {
   height: 34px;
   overflow-x: auto;
