@@ -30,7 +30,7 @@ export interface WorkbenchUiState {
 
 export type WorkbenchStore = StoreApi<WorkbenchUiState>
 
-/** 每个 Better Sidebar Tab 创建一个独立 Zustand store，避免跨会话共享编辑状态。 */
+/** 每个official right Sidebar Tab创建一个独立Zustand store，避免跨会话共享编辑状态。 */
 export function createWorkbenchStore(): WorkbenchStore {
   return createStore<WorkbenchUiState>()((set, get) => ({
     server: null,

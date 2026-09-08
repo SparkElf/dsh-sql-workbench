@@ -1,6 +1,6 @@
 # dsh-sql-workbench
 
-A Navicat-style SQL workbench for DeepSeek Harness. It runs as an independent npm plugin and contributes one Database tab to dsh-better-sidebar.
+A Navicat-style SQL workbench for DeepSeek Harness. It runs as an independent npm plugin and contributes one Database page type to the official DSH right Sidebar.
 
 ## Features
 
@@ -15,22 +15,21 @@ A Navicat-style SQL workbench for DeepSeek Harness. It runs as an independent np
 - Saved query library and editable working copies.
 - Context menus for adding databases, tables, views, saved queries, and drafts to the conversation.
 - AI tools that create a draft, keep editing the current draft by default, inspect catalogs, and execute SQL.
-- Better Sidebar compact, standard, wide, bottom-panel, and free-window layouts.
+- Official right Sidebar push, fullscreen, split-pane, and floating-tab presentations.
 - Chinese and English UI following the active DSH locale.
 
 ## Install
 
-Requires DSH 0.1.2-alpha.2 and Better Sidebar.
+Requires DSH 0.1.5-alpha.1.
 
-    dsh plugin --profile web add dsh-better-sidebar@alpha
-    dsh plugin --profile web add file:/absolute/path/to/dsh-sql-workbench-0.2.0.tgz
+    dsh plugin --profile web add dsh-sql-workbench@0.5.0
 
-Restart dsh web, refresh the browser, expand Better Sidebar, then open New tab > Database.
+Restart dsh web, refresh the browser, expand the right Sidebar, then choose Database from its Guide.
 
 ### Install from this checkout
 
-    npm install --legacy-peer-deps
-    npm run build
+    pnpm install
+    pnpm run build
     dsh plugin --profile web add file:/absolute/path/to/dsh-sql-workbench
 
 ## User workflow
@@ -68,9 +67,9 @@ Recent query results, object details, and preview pages live in the running DSH 
 
 ## Development
 
-    npm install --legacy-peer-deps
-    npm run typecheck
-    npm run build
+    pnpm install
+    pnpm run typecheck
+    pnpm run build
 
 The browser bundle follows the DSH module-loader contract and inlines CodeMirror, Zustand, and the workbench UI. React and Cordis resolve from the DSH client module table. The host half exposes /dsh-sql-workbench/api/* and /dsh-sql-workbench/ws.
 

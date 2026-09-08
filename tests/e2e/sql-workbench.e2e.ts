@@ -57,18 +57,11 @@ test('user manages SQL, saves it, and adds query and table references to chat', 
   await dismissOnboarding(page)
   const composer = await createTestSession(page)
 
-  const sidebar = page.locator('[data-dsh-better-sidebar]')
-  await expect(sidebar).toBeAttached()
-  const expand = sidebar.getByRole('button', { name: /Expand sidebar|展开侧边栏/ })
-  if (await expand.count()) await expand.click()
-
-  const databaseTab = sidebar.locator('[title="Database"][draggable="true"], [title="数据库"][draggable="true"]').first()
-  if ((await databaseTab.count()) === 0) {
-    await sidebar.getByRole('button', { name: /New tab|新建标签页/ }).first().click()
-    await page.getByRole('menuitem', { name: /Database|数据库/ }).click()
-  } else {
-    await databaseTab.click()
-  }
+  const sidebar = page.locator('[data-rightbar-col]')
+  await page.locator('[data-sidebar-right-expand]').click()
+  const guide = sidebar.locator('[data-sidebar-right-guide]')
+  await expect(guide).toBeVisible()
+  await guide.getByRole('button', { name: /Database|数据库/ }).click()
 
   const workbench = page.locator('[data-dsh-sql-workbench]')
   await expect(workbench).toBeVisible()
