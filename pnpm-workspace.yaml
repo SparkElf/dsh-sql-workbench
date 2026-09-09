@@ -1,0 +1,21 @@
+packages:
+  - .
+autoInstallPeers: false
+allowBuilds:
+  oracledb: true
+minimumReleaseAgeExclude:
+  - '@deepseek-ai/dsh-agent@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-brand@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-client-locale@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-conversation@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-renderer@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-session@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-sidebar-right@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-client-ui-slots@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-host-webserver@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-llm@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-timeout@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-tools@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-typert-protocol@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-util-crypto@0.1.5-alpha.1'
+  - '@deepseek-ai/dsh-util-values@0.1.5-alpha.1'
