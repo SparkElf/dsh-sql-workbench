@@ -1,6 +1,6 @@
 {
   "name": "dsh-sql-workbench",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "SQL connection, catalog, query, and result workbench for the official DSH right Sidebar.",
   "type": "module",
   "main": "lib/index.js",
@@ -58,17 +58,17 @@
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",
-    "@deepseek-ai/dsh-agent": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-locale": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-host-webserver": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-llm": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-tools": "0.1.5-alpha.1",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "react": "^18.2.0 || ^19.0.0",
-    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-session": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-alpha.1"
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-session": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-rc.2"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.0",
@@ -85,12 +85,12 @@
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.2",
-    "@deepseek-ai/dsh-agent": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-locale": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-host-webserver": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-llm": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-tools": "0.1.5-alpha.1",
+    "@deepseek-ai/dsh-agent": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-locale": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-conversation": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-host-webserver": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-llm": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-tools": "0.1.5-rc.2",
     "@playwright/test": "^1.61.1",
     "@types/node": "^24.0.0",
     "@types/oracledb": "^7.0.3",
@@ -103,9 +103,9 @@
     "react-dom": "^18.3.1",
     "tsdown": "^0.22.2",
     "typescript": "^5.6.0",
-    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-session": "0.1.5-alpha.1",
-    "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-alpha.1"
+    "@deepseek-ai/dsh-client-ui-sidebar-right": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-session": "0.1.5-rc.2",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.5-rc.2"
   }
 }
