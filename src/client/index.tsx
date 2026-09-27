@@ -22,7 +22,7 @@ export function apply(ctx: Context): void {
     id: TAB_ID,
     kind: TAB_KIND,
     title: () => translate(ctx, 'tab.database'),
-    guide: [{ order: 45, title: () => translate(ctx, 'tab.database'), description: () => translate(ctx, 'tab.database'), icon: VscDatabase }],
+    guide: [{ id: 'sql-workbench.guide', order: 45, title: () => translate(ctx, 'tab.database'), description: () => translate(ctx, 'tab.database'), icon: VscDatabase }],
   }), 'dsh-sql-workbench: right Sidebar type')
   ctx.effect(() => ctx.slots.inject('sidebar.right.pane.tab', () => ctx.slots.register(
     { name: 'sidebar.right.pane.tab', key: TAB_ID },
