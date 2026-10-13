@@ -20,9 +20,10 @@ A Navicat-style SQL workbench for DeepSeek Harness. It runs as an independent np
 
 ## Install
 
-Requires DSH 0.1.5-alpha.1.
+Requires DSH 0.2.1-alpha.2 or newer. The DSH peers are ranges rather than exact pins, so a
+newer runtime satisfies them without republishing this plugin.
 
-    dsh plugin --profile web add dsh-sql-workbench@0.5.0
+    dsh plugin --profile web add dsh-sql-workbench@0.5.3
 
 Restart dsh web, refresh the browser, expand the right Sidebar, then choose Database from its Guide.
 
