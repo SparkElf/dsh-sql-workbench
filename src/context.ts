@@ -22,7 +22,24 @@ export interface SqlToolsService {
   register(tool: unknown): () => void
 }
 
+export interface SqlApproval {
+  request(input: {
+    agent: unknown
+    toolName: string
+    callId: string
+    signal: AbortSignal
+    reason: string
+  }): Promise<string>
+}
+
+export interface SqlCredentials {
+  resolve(ref: unknown): Promise<{ value?: string } | undefined>
+}
+
 export type SqlContext = CordisContext & {
   webServer: SqlWebServer
   tools: SqlToolsService
+  approval: SqlApproval
+  credentials: SqlCredentials
+  logger: { info(...args: unknown[]): void; error(...args: unknown[]): void }
 }

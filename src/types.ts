@@ -9,6 +9,15 @@ export interface ConnectionBase {
   description?: string
   tags?: string[]
   versionHint?: string
+  /**
+   * DSH credential reference holding this connection's password.
+   *
+   * A connection saved by a model tool carries the reference, never the value: the tool
+   * accepts no plaintext password, and the Host resolves the reference only for the duration
+   * of a test or query. Connections configured in the UI keep using the workbench vault and
+   * may omit this field.
+   */
+  credentialRef?: string
 }
 
 export interface SqliteConnection extends ConnectionBase {
@@ -109,6 +118,29 @@ export interface ObjectConstraint {
   definition?: string | null
 }
 
+/**
+ * One foreign key, flattened from the constraint catalogue.
+ *
+ * The inspectors render it as "local columns → referenced table(columns)" and the
+ * conversation reference serialises the same shape, so the mapping is done once on
+ * the Host instead of being re-derived by each surface.
+ */
+export interface ObjectForeignKey {
+  name: string
+  columns: string[]
+  referencedTable: string
+  referencedColumns: string[]
+  onDelete?: string | null
+  onUpdate?: string | null
+  definition?: string | null
+}
+
+/** A metadata block that failed while the rest of the object loaded. */
+export interface ObjectDetailsBlockError {
+  block: 'indexes' | 'constraints' | 'foreignKeys' | 'ddl'
+  message: string
+}
+
 export interface ObjectDetails {
   connectionId: string
   capabilities: DriverCapabilities
@@ -116,6 +148,12 @@ export interface ObjectDetails {
   qualifiedName: string
   indexes: ObjectIndex[]
   constraints: ObjectConstraint[]
+  foreignKeys: ObjectForeignKey[]
+  /** Native DDL when the driver offers it, otherwise generated from the catalogue. */
+  ddl: string | null
+  ddlSource: 'native' | 'generated' | 'none'
+  /** Blocks that failed; the remaining blocks are still served. */
+  blockErrors: ObjectDetailsBlockError[]
 }
 
 export type PreviewFilterOperator = 'eq' | 'neq' | 'contains' | 'startsWith' | 'gt' | 'gte' | 'lt' | 'lte' | 'isNull' | 'isNotNull'

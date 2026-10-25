@@ -15,6 +15,7 @@ import type {
   MysqlConnection,
   ObjectConstraint,
   ObjectDetails,
+  ObjectForeignKey,
   ObjectIndex,
   ObjectPreviewRequest,
   OracleConnection,
@@ -35,6 +36,8 @@ interface TableRow {
   name: string
   kind: 'table' | 'view'
   definition: string | null
+  /** Table/view comment, when the catalogue exposes one. */
+  comment?: string | null
 }
 
 interface ColumnRow {
@@ -46,6 +49,8 @@ interface ColumnRow {
   nullable: boolean
   defaultValue: string | null
   ordinal: number
+  /** Column comment, or null where the driver has no column comments (SQLite). */
+  comment?: string | null
 }
 
 function schemaKey(database: string, schema: string | null): string {
@@ -78,6 +83,7 @@ function assembleCatalog(connectionId: string, tables: TableRow[], columns: Colu
       name: row.name,
       columns: [],
       definition: row.definition,
+      comment: row.comment ?? null,
     }
     schema.objects.push(object)
     objects.set(key + '::' + row.name, object)
@@ -92,6 +98,7 @@ function assembleCatalog(connectionId: string, tables: TableRow[], columns: Colu
       nullable: row.nullable,
       defaultValue: row.defaultValue,
       ordinal: row.ordinal,
+      comment: row.comment ?? null,
     }
     object.columns.push(column)
   }
@@ -124,7 +131,11 @@ async function postgresCatalog(connection: PostgresConnection): Promise<CatalogS
   await client.connect()
   try {
     const tableSql = [
-      'SELECT t.table_catalog, t.table_schema, t.table_name, t.table_type, v.view_definition',
+      'SELECT t.table_catalog, t.table_schema, t.table_name, t.table_type, v.view_definition,',
+      "(SELECT d.description FROM pg_catalog.pg_description d",
+      '  JOIN pg_catalog.pg_class cl ON cl.oid = d.objoid',
+      '  JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace',
+      '  WHERE ns.nspname = t.table_schema AND cl.relname = t.table_name AND d.objsubid = 0) AS table_comment',
       'FROM information_schema.tables t',
       'LEFT JOIN information_schema.views v',
       'ON v.table_catalog = t.table_catalog',
@@ -133,9 +144,14 @@ async function postgresCatalog(connection: PostgresConnection): Promise<CatalogS
       'ORDER BY t.table_catalog, t.table_schema, t.table_name',
     ].join(' ')
     const columnSql = [
-      'SELECT table_catalog, table_schema, table_name, column_name, data_type,',
-      'is_nullable, column_default, ordinal_position',
-      'FROM information_schema.columns',
+      'SELECT c.table_catalog, c.table_schema, c.table_name, c.column_name, c.data_type,',
+      'c.is_nullable, c.column_default, c.ordinal_position,',
+      '(SELECT d.description FROM pg_catalog.pg_description d',
+      '  JOIN pg_catalog.pg_class cl ON cl.oid = d.objoid',
+      '  JOIN pg_catalog.pg_namespace ns ON ns.oid = cl.relnamespace',
+      '  JOIN pg_catalog.pg_attribute a ON a.attrelid = cl.oid AND a.attnum = d.objsubid',
+      '  WHERE ns.nspname = c.table_schema AND cl.relname = c.table_name AND a.attname = c.column_name) AS column_comment',
+      'FROM information_schema.columns c',
       'ORDER BY table_catalog, table_schema, table_name, ordinal_position',
     ].join(' ')
     const tableResult = await client.query<{
@@ -144,6 +160,7 @@ async function postgresCatalog(connection: PostgresConnection): Promise<CatalogS
       table_name: string
       table_type: string
       view_definition: string | null
+      table_comment: string | null
     }>(tableSql)
     const columnResult = await client.query<{
       table_catalog: string
@@ -154,6 +171,7 @@ async function postgresCatalog(connection: PostgresConnection): Promise<CatalogS
       is_nullable: string
       column_default: string | null
       ordinal_position: number
+      column_comment: string | null
     }>(columnSql)
     const snapshot = assembleCatalog(
       connection.id,
@@ -163,6 +181,7 @@ async function postgresCatalog(connection: PostgresConnection): Promise<CatalogS
         name: row.table_name,
         kind: row.table_type === 'VIEW' ? 'view' : 'table',
         definition: row.view_definition,
+        comment: row.table_comment,
       })),
       columnResult.rows.map(row => ({
         database: row.table_catalog,
@@ -173,6 +192,7 @@ async function postgresCatalog(connection: PostgresConnection): Promise<CatalogS
         nullable: row.is_nullable === 'YES',
         defaultValue: row.column_default,
         ordinal: row.ordinal_position,
+        comment: row.column_comment,
       })),
     )
     let version = connection.versionHint
@@ -196,7 +216,7 @@ async function mysqlCatalog(connection: MysqlConnection): Promise<CatalogSnapsho
   })
   try {
     const tableSql = [
-      'SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_TYPE, v.VIEW_DEFINITION',
+      'SELECT t.TABLE_SCHEMA, t.TABLE_NAME, t.TABLE_TYPE, t.TABLE_COMMENT, v.VIEW_DEFINITION',
       'FROM information_schema.TABLES t',
       'LEFT JOIN information_schema.VIEWS v',
       'ON v.TABLE_SCHEMA = t.TABLE_SCHEMA AND v.TABLE_NAME = t.TABLE_NAME',
@@ -204,7 +224,7 @@ async function mysqlCatalog(connection: MysqlConnection): Promise<CatalogSnapsho
     ].join(' ')
     const columnSql = [
       'SELECT TABLE_SCHEMA, TABLE_NAME, COLUMN_NAME, COLUMN_TYPE, IS_NULLABLE,',
-      'COLUMN_DEFAULT, ORDINAL_POSITION',
+      'COLUMN_DEFAULT, COLUMN_COMMENT, ORDINAL_POSITION',
       'FROM information_schema.COLUMNS',
       'ORDER BY TABLE_SCHEMA, TABLE_NAME, ORDINAL_POSITION',
     ].join(' ')
@@ -218,6 +238,7 @@ async function mysqlCatalog(connection: MysqlConnection): Promise<CatalogSnapsho
         name: String(row.TABLE_NAME),
         kind: String(row.TABLE_TYPE).includes('VIEW') ? 'view' : 'table',
         definition: row.VIEW_DEFINITION === null ? null : String(row.VIEW_DEFINITION),
+        comment: row.TABLE_COMMENT === null || row.TABLE_COMMENT === undefined ? null : String(row.TABLE_COMMENT),
       })),
       columnRows.map(row => ({
         database: String(row.TABLE_SCHEMA),
@@ -228,6 +249,7 @@ async function mysqlCatalog(connection: MysqlConnection): Promise<CatalogSnapsho
         nullable: String(row.IS_NULLABLE) === 'YES',
         defaultValue: row.COLUMN_DEFAULT === null ? null : String(row.COLUMN_DEFAULT),
         ordinal: Number(row.ORDINAL_POSITION),
+        comment: row.COLUMN_COMMENT === null || row.COLUMN_COMMENT === undefined ? null : String(row.COLUMN_COMMENT),
       })),
     )
     let version = connection.versionHint
@@ -254,12 +276,12 @@ async function oracleCatalog(connection: OracleConnection): Promise<CatalogSnaps
   try {
     const owner = (connection.database || connection.user).toUpperCase()
     const tablesResult = await client.execute(
-      "SELECT SYS_CONTEXT('USERENV','DB_NAME') AS DATABASE_NAME, OWNER, OBJECT_NAME, OBJECT_TYPE FROM ALL_OBJECTS WHERE OWNER = :owner AND OBJECT_TYPE IN ('TABLE','VIEW') ORDER BY OBJECT_NAME",
+      "SELECT SYS_CONTEXT('USERENV','DB_NAME') AS DATABASE_NAME, o.OWNER, o.OBJECT_NAME, o.OBJECT_TYPE, tc.COMMENTS AS TABLE_COMMENT FROM ALL_OBJECTS o LEFT JOIN ALL_TAB_COMMENTS tc ON tc.OWNER = o.OWNER AND tc.TABLE_NAME = o.OBJECT_NAME WHERE o.OWNER = :owner AND o.OBJECT_TYPE IN ('TABLE','VIEW') ORDER BY o.OBJECT_NAME",
       { owner },
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     )
     const columnsResult = await client.execute(
-      'SELECT OWNER, TABLE_NAME, COLUMN_NAME, DATA_TYPE, NULLABLE, DATA_DEFAULT, COLUMN_ID FROM ALL_TAB_COLUMNS WHERE OWNER = :owner ORDER BY TABLE_NAME, COLUMN_ID',
+      'SELECT c.OWNER, c.TABLE_NAME, c.COLUMN_NAME, c.DATA_TYPE, c.NULLABLE, c.DATA_DEFAULT, c.COLUMN_ID, cc.COMMENTS AS COLUMN_COMMENT FROM ALL_TAB_COLUMNS c LEFT JOIN ALL_COL_COMMENTS cc ON cc.OWNER = c.OWNER AND cc.TABLE_NAME = c.TABLE_NAME AND cc.COLUMN_NAME = c.COLUMN_NAME WHERE c.OWNER = :owner ORDER BY c.TABLE_NAME, c.COLUMN_ID',
       { owner },
       { outFormat: oracledb.OUT_FORMAT_OBJECT },
     )
@@ -274,6 +296,7 @@ async function oracleCatalog(connection: OracleConnection): Promise<CatalogSnaps
         name: String(row.OBJECT_NAME),
         kind: String(row.OBJECT_TYPE) === 'VIEW' ? 'view' : 'table',
         definition: null,
+        comment: row.TABLE_COMMENT === null || row.TABLE_COMMENT === undefined ? null : String(row.TABLE_COMMENT),
       })),
       columns.map(row => ({
         database: databaseName,
@@ -284,6 +307,7 @@ async function oracleCatalog(connection: OracleConnection): Promise<CatalogSnaps
         nullable: String(row.NULLABLE) === 'Y',
         defaultValue: row.DATA_DEFAULT === null ? null : String(row.DATA_DEFAULT).trim(),
         ordinal: Number(row.COLUMN_ID),
+        comment: row.COLUMN_COMMENT === null || row.COLUMN_COMMENT === undefined ? null : String(row.COLUMN_COMMENT),
       })),
     )
     let version = connection.versionHint
@@ -667,15 +691,152 @@ async function loadConstraints(connection: ConnectionConfig, object: CatalogObje
   } finally { client.close() }
 }
 
+/** Strip one layer of SQL identifier quoting, as written by each driver's DDL. */
+function unquoteIdentifier(value: string): string {
+  const trimmed = value.trim()
+  if (trimmed.length >= 2 && ((trimmed.startsWith('"') && trimmed.endsWith('"')) || (trimmed.startsWith('`') && trimmed.endsWith('`')))) {
+    return trimmed.slice(1, -1).replaceAll('""', '"').replaceAll('``', '`')
+  }
+  if (trimmed.startsWith('[') && trimmed.endsWith(']')) return trimmed.slice(1, -1)
+  return trimmed
+}
+
+/** Parse `REFERENCES table(columns)` out of a driver's foreign-key definition. */
+function referenceOf(definition: string | null | undefined): { table: string; columns: string[] } | null {
+  const match = /REFERENCES\s+([^\s(]+)\s*\(([^)]*)\)/iu.exec(definition ?? '')
+  if (match === null) return null
+  return {
+    table: unquoteIdentifier(match[1] ?? ''),
+    columns: (match[2] ?? '').split(',').map(part => unquoteIdentifier(part)).filter(name => name !== ''),
+  }
+}
+
+/**
+ * Flatten foreign-key constraints into the shape the inspector and the conversation
+ * reference share. A driver that cannot report the referenced columns still contributes
+ * the constraint definition, so the row names what it can rather than disappearing.
+ */
+function foreignKeysOf(constraints: ObjectConstraint[]): ObjectForeignKey[] {
+  return constraints.filter(constraint => constraint.kind === 'foreign').map(constraint => {
+    const reference = referenceOf(constraint.definition)
+    return {
+      name: constraint.name,
+      columns: constraint.columns,
+      referencedTable: reference?.table ?? '',
+      referencedColumns: reference?.columns ?? [],
+      definition: constraint.definition ?? null,
+    }
+  })
+}
+
+/**
+ * Build DDL from the catalogue when the driver offers none.
+ *
+ * PostgreSQL has no `SHOW CREATE TABLE`, and a live Oracle call to `DBMS_METADATA`
+ * can be denied by privileges. The inspector still has to show something actionable,
+ * so the columns, primary key and unique constraints it already measured are rendered
+ * as a CREATE TABLE and the UI labels the result as generated rather than native.
+ */
+export function generatedDdl(connection: ConnectionConfig, object: CatalogObject, indexes: ObjectIndex[], constraints: ObjectConstraint[]): string {
+  const quote = (value: string): string => quoteIdentifier(connection.kind, value)
+  const qualified = qualifiedObjectName(connection.kind, object)
+  if (object.kind === 'view') {
+    return '-- Native view DDL is unavailable from this driver.\nCREATE VIEW ' + qualified + ' AS\n  -- see the view definition in the editor\n  SELECT 1;'
+  }
+  const lines = object.columns.map(column => {
+    const parts = ['  ' + quote(column.name) + ' ' + (column.dataType === '' ? 'TEXT' : column.dataType)]
+    if (!column.nullable) parts.push('NOT NULL')
+    if (column.defaultValue !== null && column.defaultValue !== '') parts.push('DEFAULT ' + column.defaultValue)
+    return parts.join(' ')
+  })
+  const primary = constraints.find(constraint => constraint.kind === 'primary')?.columns
+    ?? indexes.find(index => index.primary)?.columns
+    ?? []
+  if (primary.length > 0) lines.push('  PRIMARY KEY (' + primary.map(quote).join(', ') + ')')
+  for (const constraint of constraints) {
+    if (constraint.kind !== 'unique' || constraint.columns.length === 0) continue
+    lines.push('  UNIQUE (' + constraint.columns.map(quote).join(', ') + ')')
+  }
+  return '-- Generated from the live catalogue; not the server\'s canonical DDL.\nCREATE TABLE ' + qualified + ' (\n' + lines.join(',\n') + '\n);'
+}
+
+/** Read native DDL when the driver exposes it; null asks the caller to generate it. */
+async function loadNativeDdl(connection: ConnectionConfig, object: CatalogObject): Promise<string | null> {
+  if (object.kind === 'view') {
+    if (object.definition === null || object.definition.trim() === '') return null
+    return 'CREATE VIEW ' + qualifiedObjectName(connection.kind, object) + ' AS\n' + object.definition.trim() + ';'
+  }
+  if (connection.kind === 'sqlite') {
+    const client = new DatabaseSync(connection.file)
+    try {
+      const row = client.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?").get(object.name) as { sql: string | null } | undefined
+      return row?.sql ?? null
+    } finally { client.close() }
+  }
+  if (isMysqlConnection(connection)) {
+    const client = await mysql.createConnection({ host: connection.host, port: connection.port, user: connection.user, password: connection.password, database: connection.database })
+    try {
+      const qualified = quoteIdentifier(connection.kind, object.database) + '.' + quoteIdentifier(connection.kind, object.name)
+      const [rows] = await client.query('SHOW CREATE TABLE ' + qualified)
+      const row = (rows as Array<Record<string, unknown>>)[0]
+      if (row === undefined) return null
+      const ddl = Object.values(row).find(value => typeof value === 'string' && /^CREATE\s/i.test(value))
+      return typeof ddl === 'string' ? ddl : null
+    } catch { return null } finally { await client.end() }
+  }
+  if (connection.kind === 'oracle') {
+    const client = await oracledb.getConnection({ user: connection.user, password: connection.password, connectString: connection.host + ':' + String(connection.port) + '/' + connection.serviceName })
+    try {
+      const owner = (object.schema ?? connection.database).toUpperCase()
+      const result = await client.execute(
+        'SELECT DBMS_METADATA.GET_DDL(:objectType, :objectName, :owner) AS ddl FROM dual',
+        { objectType: 'TABLE', objectName: object.name, owner },
+        { outFormat: oracledb.OUT_FORMAT_OBJECT },
+      )
+      const row = (result.rows?.[0] ?? {}) as Record<string, unknown>
+      const ddl = row.DDL
+      if (typeof ddl === 'string') return ddl.trim()
+      if (ddl !== null && typeof ddl === 'object' && 'getData' in ddl) {
+        return String(await (ddl as { getData(): Promise<string> }).getData()).trim()
+      }
+      return null
+    } catch { return null } finally { await client.close() }
+  }
+  return null
+}
+
 export async function loadObjectDetails(connection: ConnectionConfig, object: CatalogObject): Promise<ObjectDetails> {
-  const [indexes, constraints] = await Promise.all([loadIndexes(connection, object), loadConstraints(connection, object)])
+  // Each block is independent: a privilege that hides indexes must not also hide the
+  // columns or the DDL. The failed block travels back with its reason instead.
+  const blockErrors: ObjectDetails['blockErrors'] = []
+  const settle = async <T,>(block: 'indexes' | 'constraints' | 'ddl', action: () => Promise<T>): Promise<T | undefined> => {
+    try {
+      return await action()
+    } catch (error) {
+      blockErrors.push({ block, message: error instanceof Error ? error.message : String(error) })
+      return undefined
+    }
+  }
+  const [indexes, constraints, nativeDdl] = await Promise.all([
+    settle('indexes', () => loadIndexes(connection, object)),
+    settle('constraints', () => loadConstraints(connection, object)),
+    settle('ddl', () => loadNativeDdl(connection, object)),
+  ])
+  const indexList = indexes ?? []
+  const constraintList = constraints ?? []
+  const foreignKeys = foreignKeysOf(constraintList)
+  const ddl = nativeDdl ?? (object.kind === 'view' ? null : generatedDdl(connection, object, indexList, constraintList))
   return {
     connectionId: connection.id,
     capabilities: driverCapabilities(connection.kind),
     object,
     qualifiedName: qualifiedObjectName(connection.kind, object),
-    indexes,
-    constraints,
+    indexes: indexList,
+    constraints: constraintList,
+    foreignKeys,
+    ddl,
+    ddlSource: nativeDdl !== null ? 'native' : ddl !== null ? 'generated' : 'none',
+    blockErrors,
   }
 }
 

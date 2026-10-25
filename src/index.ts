@@ -7,7 +7,7 @@ import { registerSqlTools } from './tools.ts'
 import type { CatalogObject, ConnectionConfig, ObjectPreviewRequest } from './types.ts'
 
 export const name = 'dsh-sql-workbench'
-export const inject = ['webServer', 'tools']
+export const inject = ['webServer', 'tools', 'approval', 'credentials']
 
 async function readBody(req: IncomingMessage): Promise<Record<string, unknown>> {
   const chunks: Uint8Array[] = []

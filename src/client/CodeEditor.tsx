@@ -11,6 +11,8 @@ export interface CodeEditorProps {
   kind: ConnectionKind
   onChange(value: string): void
   onCommit(value: string): void
+  /** Read-only mode, used by the inspector's DDL tab. */
+  readOnly?: boolean
 }
 
 function dialect(kind: ConnectionKind) {
@@ -40,7 +42,7 @@ const editorTheme = EditorView.theme({
 })
 
 /** CodeMirror 生命周期归组件所有，外部 AI 更新与本地输入都落到同一文档。 */
-export function CodeEditor({ value, kind, onChange, onCommit }: CodeEditorProps) {
+export function CodeEditor({ value, kind, onChange, onCommit, readOnly = false }: CodeEditorProps) {
   const hostRef = useRef<HTMLDivElement | null>(null)
   const viewRef = useRef<EditorView | null>(null)
   const applyingRef = useRef(false)
@@ -58,6 +60,7 @@ export function CodeEditor({ value, kind, onChange, onCommit }: CodeEditorProps)
         basicSetup,
         keymap.of([...defaultKeymap, ...historyKeymap]),
         sql({ dialect: dialect(kind) }),
+        ...(readOnly ? [EditorState.readOnly.of(true), EditorView.editable.of(false)] : []),
         editorTheme,
         EditorView.updateListener.of(update => {
           if (update.docChanged && !applyingRef.current) changeRef.current(update.state.doc.toString())
@@ -73,7 +76,7 @@ export function CodeEditor({ value, kind, onChange, onCommit }: CodeEditorProps)
     const view = new EditorView({ state, parent: host })
     viewRef.current = view
     return () => { view.destroy(); viewRef.current = null }
-  }, [kind])
+  }, [kind, readOnly])
 
   useEffect(() => {
     const view = viewRef.current

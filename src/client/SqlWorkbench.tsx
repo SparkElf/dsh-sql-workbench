@@ -36,6 +36,8 @@ import { ObjectTree, type ObjectContextTarget } from './ObjectTree.tsx'
 import { ResultGrid } from './ResultGrid.tsx'
 import { createWorkbenchStore, useWorkbench, WorkbenchStoreContext } from './store.ts'
 import css from './SqlWorkbench.module.css'
+import { getComposerSessionId } from './composerBridge.ts'
+import { copyText } from './clipboard.ts'
 
 interface ConversationInput {
   state: { getSnapshot(): { draft: string } }
@@ -48,6 +50,13 @@ interface ConversationService {
 
 interface ClientContext extends Context {
   sessions: { scope(sessionId: string): Context | undefined }
+  /** The conversation service owns the composer; it is a root service, not a scoped one. */
+  conversation: { input: { for(scope: Context): ConversationInput } }
+}
+
+/** The main-view session binding; the right-Sidebar pane carries its own id. */
+interface UiSessionBinding {
+  current?: { getSnapshot(): { key?: string } }
 }
 
 interface MenuState {
@@ -82,6 +91,69 @@ function ContextMenu({ menu, onClose, children }: { menu: MenuState; onClose(): 
   </div>
 }
 
+interface ReferenceChip {
+  id: string
+  label: string
+  block: string
+}
+
+interface AddDialogState {
+  object: CatalogObject
+}
+
+interface ToastState {
+  kind: 'ok' | 'error'
+  message: string
+}
+
+function escapeAttribute(value: string): string {
+  return value.replaceAll('&', '&amp;').replaceAll('"', '&quot;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+}
+
+function trimSampleValue(value: unknown): unknown {
+  if (typeof value === 'string') return value.length > 200 ? value.slice(0, 200) + '…' : value
+  if (value instanceof Uint8Array) return '[binary ' + String(value.byteLength) + ' B]'
+  if (typeof value === 'bigint') return String(value)
+  return value
+}
+
+function sampleRowsOf(preview: WorkbenchState['preview']): Array<Record<string, unknown>> | null {
+  if (preview === null || preview === undefined) return null
+  return preview.rows.slice(0, 5).map(row => {
+    const record: Record<string, unknown> = {}
+    preview.columns.forEach((column, index) => { record[column] = trimSampleValue(row[index]) })
+    return record
+  })
+}
+
+/**
+ * Serialise one object for the model.
+ *
+ * The attribute list repeats what the JSON body says because a reader of the raw
+ * conversation can see the type and object without parsing 100 lines of JSON; the body
+ * stays the single place a tool or prompt reads the actual metadata from.
+ */
+function referenceBlock(
+  kind: string,
+  connection: string,
+  database: string,
+  schema: string | null,
+  object: string,
+  payload: Record<string, unknown>,
+): string {
+  const attributes = [
+    'kind="' + escapeAttribute(kind) + '"',
+    'connection="' + escapeAttribute(connection) + '"',
+    'database="' + escapeAttribute(database) + '"',
+    'schema="' + escapeAttribute(schema ?? '') + '"',
+    'object="' + escapeAttribute(object) + '"',
+  ].join(' ')
+  return '以下是用户从 SQL Workbench 添加的数据库对象上下文，请基于它回答；不要假设未提供的行或权限。\n'
+    + '<sql_workbench_reference ' + attributes + '>\n'
+    + JSON.stringify(payload, null, 2)
+    + '\n</sql_workbench_reference>'
+}
+
 function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
   const t = useT()
   const server = useWorkbench(state => state.server)
@@ -108,6 +180,10 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
   const [saveDialog, setSaveDialog] = useState(false)
   const [saveName, setSaveName] = useState('')
   const [menu, setMenu] = useState<MenuState | null>(null)
+  const [chips, setChips] = useState<ReferenceChip[]>([])
+  const [addDialog, setAddDialog] = useState<AddDialogState | null>(null)
+  const [addOptions, setAddOptions] = useState({ structure: true, samples: false, ddl: false })
+  const [toast, setToast] = useState<ToastState | null>(null)
   const editorSql = useRef('')
 
   const current = server?.drafts.find(draft => draft.id === server.currentDraftId) ?? null
@@ -147,6 +223,28 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
 
   useEffect(() => { editorSql.current = current?.sql ?? '' }, [current?.id, current?.sql])
 
+  useEffect(() => {
+    if (toast === null) return
+    const timer = window.setTimeout(() => { setToast(null) }, 3200)
+    return () => { window.clearTimeout(timer) }
+  }, [toast])
+
+  // A chip is a promise that its block is still in the draft. Sending clears the
+  // draft, and the chip must disappear with it rather than outliving the message.
+  useEffect(() => {
+    if (chips.length === 0) return
+    const timer = window.setInterval(() => {
+      const input = conversationInput()
+      if (input === null) return
+      const draft = input.state.getSnapshot().draft
+      setChips(previous => {
+        const next = previous.filter(chip => draft.includes(chip.block))
+        return next.length === previous.length ? previous : next
+      })
+    }, 1500)
+    return () => { window.clearInterval(timer) }
+  }, [chips])
+
   const updateSql = useCallback((sql: string): void => {
     if (current === null) return
     editorSql.current = sql
@@ -162,15 +260,138 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
     })
   }, [current, sessionId, setError])
 
-  const appendToChat = useCallback((reference: unknown): void => {
-    const scope = (ctx as ClientContext).sessions.scope(sessionId)
-    if (scope === undefined) throw new Error('Conversation scope is unavailable: ' + sessionId)
-    const conversation = scope.get('conversation') as ConversationService
-    const input = conversation.input.for(scope)
-    const draft = input.state.getSnapshot().draft
-    const block = '[SQL Workbench Reference]\n' + JSON.stringify(reference, null, 2) + '\n[/SQL Workbench Reference]'
-    input.setDraft(draft === '' ? block : draft + '\n\n' + block)
+  const conversationInput = useCallback((): ConversationInput | null => {
+    try {
+      const client = ctx as ClientContext
+      // The right-Sidebar pane has its own session id, which is not always an open
+      // DSH Session. The main-view binding is the conversation the reader is looking
+      // at, so prefer it when it exists.
+      // The dock bridge is authoritative: it is the only contribution that receives the
+      // composer's own Session id. `uiSession.current` and the pane prop are fallbacks.
+      const activeId = (ctx.get('uiSession') as UiSessionBinding | undefined)?.current?.getSnapshot().key
+      const targetId = getComposerSessionId() ?? activeId ?? sessionId
+      const scope = client.sessions.scope(targetId)
+      if (scope === undefined) return null
+      const conversation = client.conversation
+      if (conversation === undefined || conversation.input === undefined) return null
+      return conversation.input.for(scope)
+    } catch {
+      return null
+    }
   }, [ctx, sessionId])
+
+  /**
+   * Put one reference block into the conversation draft.
+   *
+   * This never throws: a missing conversation scope is a Toast, because the reader
+   * clicked a button and a dead control must say why it did nothing.
+   */
+  const appendToChat = useCallback((block: string): boolean => {
+    const input = conversationInput()
+    if (input === null) {
+      setToast({ kind: 'error', message: t('add.scopeUnavailable') })
+      return false
+    }
+    try {
+      const draft = input.state.getSnapshot().draft
+      input.setDraft(draft.trim() === '' ? block : draft.trimEnd() + '\n\n' + block)
+      return true
+    } catch (failure) {
+      console.error('[dsh-sql-workbench] append to conversation failed', failure)
+      setToast({ kind: 'error', message: failure instanceof Error ? failure.message : t('add.scopeUnavailable') })
+      return false
+    }
+  }, [conversationInput, t])
+
+  const removeChip = useCallback((chip: ReferenceChip): void => {
+    const input = conversationInput()
+    if (input !== null) {
+      const draft = input.state.getSnapshot().draft
+      if (draft.includes(chip.block)) {
+        input.setDraft(draft.replace(chip.block, '').replace(/\n{3,}/gu, '\n\n').trim())
+      }
+    }
+    setChips(previous => previous.filter(candidate => candidate.id !== chip.id))
+  }, [conversationInput])
+
+  const openAddDialog = useCallback((object: CatalogObject): void => {
+    setAddOptions({ structure: true, samples: false, ddl: false })
+    setAddDialog({ object })
+  }, [])
+
+  /**
+   * Build and append one object reference.
+   *
+   * Details and sample rows are read on demand: the inspector may have been opened
+   * for a different object, and a sampled SELECT must never be what makes the panel
+   * switch to the results tab. Both calls are tolerant -- a failed sample is skipped
+   * with a Toast rather than cancelling the whole reference.
+   */
+  const confirmAddDialog = useCallback(async (): Promise<void> => {
+    const dialog = addDialog
+    if (dialog === null || selectedConnectionId === null) return
+    const object = dialog.object
+    let details = server?.objectDetails ?? null
+    if (details === null || details.object.name !== object.name || details.object.schema !== object.schema) {
+      try {
+        const next = await sqlApi<WorkbenchState>('object.details', { sessionId, connectionId: selectedConnectionId, object })
+        details = next.objectDetails ?? null
+      } catch (failure) {
+        console.error('[dsh-sql-workbench] reference details failed', failure)
+      }
+    }
+    let samples: Array<Record<string, unknown>> | null = null
+    if (addOptions.samples) {
+      try {
+        const next = await sqlApi<WorkbenchState>('object.preview', {
+          sessionId,
+          connectionId: selectedConnectionId,
+          request: { object, page: 1, pageSize: 5, filters: [], sort: null },
+        })
+        samples = sampleRowsOf(next.preview ?? null)
+      } catch (failure) {
+        console.error('[dsh-sql-workbench] reference samples failed', failure)
+        setToast({ kind: 'error', message: t('add.sampleMissing') })
+      }
+    }
+    const primary = new Set([
+      ...(details?.indexes.filter(index => index.primary).flatMap(index => index.columns) ?? []),
+      ...(details?.constraints.filter(constraint => constraint.kind === 'primary').flatMap(constraint => constraint.columns) ?? []),
+    ])
+    const ddl = details?.ddl ?? object.definition ?? null
+    const payload: Record<string, unknown> = {
+      kind: object.kind,
+      qualifiedName: details?.qualifiedName ?? qualifiedName(selectedConnection as ConnectionConfig, object),
+      comment: object.comment ?? null,
+      estimatedRows: object.estimatedRows ?? null,
+      columns: (addOptions.structure ? object.columns : []).map(column => ({
+        name: column.name,
+        type: column.dataType,
+        nullable: column.nullable,
+        default: column.defaultValue,
+        primaryKey: primary.has(column.name),
+        comment: column.comment ?? null,
+      })),
+      indexes: addOptions.structure ? details?.indexes ?? [] : [],
+      foreignKeys: addOptions.structure ? details?.foreignKeys ?? [] : [],
+      ddl: addOptions.ddl ? ddl : null,
+      sampleRows: samples,
+    }
+    const block = referenceBlock(object.kind, selectedConnection?.name ?? '', object.database, object.schema, object.name, payload)
+    if (!appendToChat(block)) {
+      // The toast explains the missing scope; close the popover so it does not keep
+      // covering the composer the reader has to use instead.
+      setAddDialog(null)
+      return
+    }
+    setChips(previous => [...previous, {
+      id: object.name + ':' + String(Date.now()),
+      label: '[' + object.kind + '] ' + object.name + ' · ' + t('add.columnCount', { count: object.columns.length }),
+      block,
+    }])
+    setToast({ kind: 'ok', message: t('add.added') })
+    setAddDialog(null)
+  }, [addDialog, addOptions, appendToChat, selectedConnection, selectedConnectionId, server?.objectDetails, sessionId, t])
 
   const refreshCatalog = (): void => {
     if (selectedConnectionId === null) return
@@ -285,24 +506,70 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
     if (saved !== undefined) selectConnection(saved.id)
   }
 
-  const testConnection = async (connection: ConnectionConfig): Promise<void> => {
-    await sqlApi('connections.test', { connection })
+  const testConnection = async (connection: ConnectionConfig): Promise<{ durationMs?: number }> => {
+    return await sqlApi<{ durationMs?: number }>('connections.test', { connection })
   }
 
   const referenceConnection = selectedConnection
+  const appendSimpleReference = (
+    kind: string,
+    objectName: string,
+    label: string,
+    payload: Record<string, unknown>,
+  ): void => {
+    const block = referenceBlock(
+      kind,
+      referenceConnection?.name ?? '',
+      referenceConnection?.kind === 'sqlite' ? 'main' : referenceConnection?.database ?? '',
+      null,
+      objectName,
+      payload,
+    )
+    if (!appendToChat(block)) return
+    setChips(previous => [...previous, {
+      id: kind + ':' + objectName + ':' + String(Date.now()),
+      label,
+      block,
+    }])
+    setToast({ kind: 'ok', message: t('add.added') })
+  }
   const addObjectReference = (object: CatalogObject): void => {
-    appendToChat({ type: object.kind, connection: referenceConnection, object })
+    openAddDialog(object)
   }
   const addDatabaseReference = (database: CatalogDatabase): void => {
-    appendToChat({ type: 'database', connection: referenceConnection, database })
+    appendSimpleReference(
+      'database',
+      database.name,
+      '[database] ' + database.name,
+      {
+        kind: 'database',
+        name: database.name,
+        product: database.product ?? null,
+        version: database.version ?? null,
+        schemas: database.schemas.map(schema => ({
+          name: schema.name,
+          objects: schema.objects.length,
+        })),
+      },
+    )
   }
   const addDraftReference = (draft: QueryDraft): void => {
     const connection = server?.connections.find(item => item.id === draft.connectionId)
-    appendToChat({ type: 'query-draft', connection, query: draft })
+    appendSimpleReference(
+      'query-draft',
+      draft.name,
+      '[query] ' + draft.name,
+      { kind: 'query-draft', name: draft.name, connection: connection?.name ?? null, sql: draft.sql },
+    )
   }
   const addSavedReference = (query: SavedQuery): void => {
     const connection = server?.connections.find(item => item.id === query.connectionId)
-    appendToChat({ type: 'saved-query', connection, query })
+    appendSimpleReference(
+      'saved-query',
+      query.name,
+      '[saved query] ' + query.name,
+      { kind: 'saved-query', name: query.name, connection: connection?.name ?? null, sql: query.sql },
+    )
   }
 
   const objectSql = (object: CatalogObject): string => 'SELECT * FROM ' + qualifiedName(selectedConnection as ConnectionConfig, object) + ';'
@@ -330,6 +597,13 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
 
     {error !== null && <div className={css.errorBar}>{error}</div>}
     {loading !== null && <div className={css.loadingBar}>{loading}</div>}
+    {chips.length > 0 && <div className={css.chipBar} data-sql-reference-chips>
+      {chips.map(chip => <span className={css.referenceChip} key={chip.id}>
+        <span className={css.referenceChipLabel}>{chip.label}</span>
+        <button title={t('add.chipRemove')} onClick={() => { removeChip(chip) }}><VscClose size={12} /></button>
+      </span>)}
+    </div>}
+    {toast !== null && <div className={css.toast} data-kind={toast.kind} role="status">{toast.message}</div>}
 
     <div className={css.body}>
       <aside className={css.explorer}>
@@ -382,7 +656,8 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
           object={selectedObject}
           details={server?.objectDetails ?? null}
           onPreview={previewObject}
-          onSend={addObjectReference}
+          onAdd={addObjectReference}
+          onRefresh={showObjectDetails}
         /> : <>
           <div className={css.queryTabs}>
             {server?.drafts.map(draft => <div key={draft.id} className={css.queryTab} data-active={draft.id === server.currentDraftId}>
@@ -427,6 +702,20 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
       onTest={testConnection}
     />}
 
+    {addDialog !== null && <div className={css.dialogBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setAddDialog(null) }}>
+      <div className={css.addPopover} role="dialog" aria-label={t('add.title')}>
+        <div className={css.dialogTitle}>{t('add.title')} · {addDialog.object.name}</div>
+        <label className={css.addOption}><input type="checkbox" checked={addOptions.structure} onChange={event => { setAddOptions(current => ({ ...current, structure: event.target.checked })) }} />{t('add.structure')}</label>
+        <label className={css.addOption}><input type="checkbox" checked={addOptions.samples} onChange={event => { setAddOptions(current => ({ ...current, samples: event.target.checked })) }} />{t('add.samples')}</label>
+        <label className={css.addOption}><input type="checkbox" checked={addOptions.ddl} onChange={event => { setAddOptions(current => ({ ...current, ddl: event.target.checked })) }} />{t('add.ddl')}</label>
+        <p className={css.addHint}>{t('add.hint')}</p>
+        <div className={css.dialogActions}>
+          <button onClick={() => { setAddDialog(null) }}>{t('action.cancel')}</button>
+          <button className={css.primaryButton} onClick={() => { void confirmAddDialog() }}>{t('add.confirm')}</button>
+        </div>
+      </div>
+    </div>}
+
     {saveDialog && <div className={css.dialogBackdrop} onMouseDown={event => { if (event.target === event.currentTarget) setSaveDialog(false) }}>
       <div className={css.dialog} role="dialog" aria-label={t('query.save')}>
         <div className={css.dialogTitle}>{t('query.save')}</div>
@@ -441,7 +730,7 @@ function SqlWorkbenchBody({ ctx, sessionId, visible }: SqlWorkbenchProps) {
         <button onClick={() => { previewObject(menuTarget.object); setMenu(null) }}><VscTable />{t('menu.preview')}</button>
         <button onClick={() => { createDraft(objectSql(menuTarget.object)); setMenu(null) }}><VscAdd />{t('query.new')}</button>
         <button onClick={() => { addObjectReference(menuTarget.object); setMenu(null) }}><VscComment />{t('menu.add')}</button>
-        <button onClick={() => { void perform(t('status.copyName'), async () => { await navigator.clipboard.writeText(qualifiedName(selectedConnection as ConnectionConfig, menuTarget.object)) }); setMenu(null) }}><VscFile />{t('menu.copyName')}</button>
+        <button onClick={() => { void perform(t('status.copyName'), async () => { if (!await copyText(qualifiedName(selectedConnection as ConnectionConfig, menuTarget.object))) throw new Error(t('inspector.copyFailed')) }); setMenu(null) }}><VscFile />{t('menu.copyName')}</button>
       </>}
       {menuTarget.kind === 'draft' && <>
         <button onClick={() => { setCurrent(menuTarget.draft); setMenu(null) }}><VscEdit />{t('query.current')}</button>
