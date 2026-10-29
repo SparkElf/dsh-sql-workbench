@@ -1,6 +1,6 @@
 {
-  "name": "dsh-sql-workbench",
-  "version": "0.5.3",
+  "name": "@sparkelf/dsh-sql-workbench",
+  "version": "0.5.4-sparkelf.1",
   "description": "SQL connection, catalog, query, and result workbench for the official DSH right Sidebar.",
   "type": "module",
   "main": "lib/index.js",
