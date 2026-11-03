@@ -1,5 +1,8 @@
 # dsh-sql-workbench
 
+> **已迁移（2026-11-04）**：本仓库的源码已迁入 `dsh-plugins-plus/packages/sql-workbench`，后续开发与发布在那里进行。
+> 本仓库保留为只读归档，最后一个从这里发布的版本是 `0.5.4-sparkelf.1`；迁移后从 monorepo 发布的是 `0.6.0` 起。
+
 A Navicat-style SQL workbench for DeepSeek Harness. It runs as an independent npm plugin and contributes one Database page type to the official DSH right Sidebar.
 
 ## Features
